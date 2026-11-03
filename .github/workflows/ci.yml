@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main,ci]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older runs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Incremental state and debug info only cost disk and cache space here.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt, clippy, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      # The toolchain and GPUI's native libraries come from the flake's
+      # devShell, as locally. The cache holds the compiled dependencies: it
+      # is saved once per toolchain and Cargo.lock, and our own crates are
+      # rebuilt on every run.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('flake.lock', 'Cargo.lock') }}
+      - name: Enter the dev shell
+        run: nix develop --command true
+      - name: Format
+        run: nix develop --command cargo fmt --all --check
+      - name: Clippy
+        run: nix develop --command cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: nix develop --command cargo test --workspace --locked
+      - name: Fixtures match the spec
+        run: |
+          nix develop --command cargo xtask gen-fixtures
+          git diff --exit-code -- tests/fixtures
+
+  nix:
+    name: nix build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix build --print-build-logs --no-link
