@@ -128,6 +128,98 @@ fn changed_order_membership_or_paging_reports_change() {
     }
 }
 
+/// A query page whose rows carry their commit: `(number, updated, sha,
+/// parent)`.
+fn page_with_commits(changes: &[(u64, &str, &str, &str)]) -> String {
+    let items: Vec<Value> = changes
+        .iter()
+        .map(|(n, u, sha, parent)| {
+            let mut c = change_json(*n, u);
+            c["current_revision"] = json!(sha);
+            c["revisions"] = json!({*sha: {"_number": 1, "commit": {
+                "parents": [{"commit": parent}], "subject": "s"}}});
+            c
+        })
+        .collect();
+    format!(")]}}'\n{}", Value::Array(items))
+}
+
+#[test]
+fn a_refresh_with_commits_fills_a_cache_without_them() {
+    let f = fixture();
+    f.http.push_response(200, page(&[(2, U1), (1, U1)], false));
+    f.http.push_response(
+        200,
+        page_with_commits(&[(2, U1, "b", "a"), (1, U1, "a", "m")]),
+    );
+    f.http.push_response(
+        200,
+        page_with_commits(&[(2, U1, "b", "a"), (1, U1, "a", "m")]),
+    );
+    f.http.push_response(200, page(&[(2, U1), (1, U1)], false));
+    block_on(f.syncer.refresh_query("q", 25)).unwrap();
+    // Same changes and times, but now with their commits: saved.
+    let up = block_on(f.syncer.refresh_query_with("q", 25, RowDetail::Commits)).unwrap();
+    assert!(up.changed);
+    let url = f.http.requests()[1].uri().to_string();
+    assert!(url.contains("o=CURRENT_COMMIT"), "{url}");
+    let cached = f.syncer.cached_query("q").unwrap().unwrap();
+    let commit = cached.changes[0].current_commit.as_ref().unwrap();
+    assert_eq!(
+        (commit.sha.as_str(), commit.parents[0].as_str()),
+        ("b", "a")
+    );
+    assert!(
+        !block_on(f.syncer.refresh_query_with("q", 25, RowDetail::Commits))
+            .unwrap()
+            .changed
+    );
+    // A plain refresh of the same rows neither counts as a change nor
+    // forgets the commits.
+    assert!(!block_on(f.syncer.refresh_query("q", 25)).unwrap().changed);
+    let cached = f.syncer.cached_query("q").unwrap().unwrap();
+    assert!(cached.changes[1].current_commit.is_some());
+}
+
+#[test]
+fn chain_parents_come_from_the_cached_related_changes() {
+    let f = fixture();
+    // 3 is built on patch set 1 of 2 ("old"), which has moved on to "b";
+    // 2 is built on 1. 4 is built on something no row is.
+    f.http.push_response(
+        200,
+        page_with_commits(&[
+            (3, U1, "c", "old"),
+            (2, U1, "b", "a"),
+            (1, U1, "a", "m"),
+            (4, U1, "d", "x"),
+        ]),
+    );
+    block_on(f.syncer.refresh_query_with("q", 25, RowDetail::Commits)).unwrap();
+    let rows = f.syncer.cached_query("q").unwrap().unwrap().changes;
+    // Nothing cached yet.
+    assert!(f.syncer.cached_chain_parents(&rows).unwrap().is_empty());
+    f.http.push_response(
+        200,
+        xssi(&json!({"changes": [
+            {"project": "p", "_change_number": 3, "_revision_number": 1,
+             "commit": {"commit": "c", "parents": [{"commit": "old"}]}},
+            {"project": "p", "_change_number": 2, "_revision_number": 1,
+             "_current_revision_number": 2,
+             "commit": {"commit": "old", "parents": [{"commit": "a"}]}},
+            {"project": "p", "_change_number": 1, "_revision_number": 1,
+             "commit": {"commit": "a", "parents": [{"commit": "m"}]}}
+        ]})),
+    );
+    block_on(f.syncer.refresh_related(ChangeNumber(3), &"c".into())).unwrap();
+    let parents = f.syncer.cached_chain_parents(&rows).unwrap();
+    assert_eq!(
+        parents,
+        HashMap::from([(ChangeNumber(3), ChangeNumber(2))]),
+        "2 on 1 is plain from the rows; 4 has nothing cached"
+    );
+}
+
 #[test]
 fn load_more_appends_from_the_cached_count() {
     let f = fixture();

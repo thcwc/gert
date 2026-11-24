@@ -27,6 +27,6 @@ pub use syncer::{
     CLAIM_STALE, ChainCommit, CommentsView, ConsolidateOptions, ConsolidateReport,
     ConsolidationTiming, DraftCounts, DraftSave, FoundChange, HeldItem, HeldPublished, MarkLedgers,
     MarkSent, MarkSettled, NewChange, POST_DEADLINE, Ported, PostOutcome, PostReport,
-    PublishOutcome, QueryUpdate, RefreshSource, RetryReport, ReviewerAdded, SLOW_RECHECK, StopFlag,
-    Syncer, WatchOptions, held_place, held_vote_drop_only, purely_local,
+    PublishOutcome, QueryUpdate, RefreshSource, RetryReport, ReviewerAdded, RowDetail,
+    SLOW_RECHECK, StopFlag, Syncer, WatchOptions, held_place, held_vote_drop_only, purely_local,
 };

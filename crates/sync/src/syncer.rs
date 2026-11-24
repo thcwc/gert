@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use futures::future::{BoxFuture, FutureExt, join_all};
 use gerrit_api::{ChangeQuery, DiffParams, GerritClient};
@@ -25,6 +28,27 @@ pub struct QueryUpdate {
     pub cached_count: usize,
     /// Whether the server has results beyond the cached ones.
     pub more_changes: bool,
+}
+
+/// What the rows of a query result carry beyond what a list row needs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowDetail {
+    #[default]
+    Plain,
+    /// The current patch set's commit and parents
+    /// ([`ChangeSummary::current_commit`]), for grouping rows by relation
+    /// chain. It costs the server a commit read per change.
+    Commits,
+}
+
+impl RowDetail {
+    fn query(self, query: &str) -> ChangeQuery {
+        let q = ChangeQuery::new(query);
+        match self {
+            Self::Plain => q,
+            Self::Commits => q.with_commits(),
+        }
+    }
 }
 
 /// The seam between "something says the data is stale" and the cache.
@@ -189,9 +213,22 @@ impl Syncer {
     ///
     /// On error the cache is untouched.
     pub async fn refresh_query(&self, query: &str, page_size: u32) -> Result<QueryUpdate, Error> {
+        self.refresh_query_with(query, page_size, RowDetail::Plain)
+            .await
+    }
+
+    /// [`Syncer::refresh_query`], with rows that carry `detail`. A cached
+    /// result without it counts as changed, so that turning it on fills
+    /// the cache at once.
+    pub async fn refresh_query_with(
+        &self,
+        query: &str,
+        page_size: u32,
+        detail: RowDetail,
+    ) -> Result<QueryUpdate, Error> {
         let page = self
             .client
-            .query_changes(&ChangeQuery::new(query).limit(page_size))
+            .query_changes(&detail.query(query).limit(page_size))
             .await?;
         let now = Timestamp::now();
 
@@ -218,6 +255,17 @@ impl Syncer {
     /// Fetches the page after the cached ones and appends it. With nothing
     /// cached this fetches the first page.
     pub async fn load_more(&self, query: &str, page_size: u32) -> Result<QueryUpdate, Error> {
+        self.load_more_with(query, page_size, RowDetail::Plain)
+            .await
+    }
+
+    /// [`Syncer::load_more`], with rows that carry `detail`.
+    pub async fn load_more_with(
+        &self,
+        query: &str,
+        page_size: u32,
+        detail: RowDetail,
+    ) -> Result<QueryUpdate, Error> {
         let have = self
             .store()
             .load_query(self.server, query)?
@@ -225,7 +273,7 @@ impl Syncer {
         let start = u32::try_from(have).unwrap_or(u32::MAX);
         let page = self
             .client
-            .query_changes(&ChangeQuery::new(query).limit(page_size).start(start))
+            .query_changes(&detail.query(query).limit(page_size).start(start))
             .await?;
         let now = Timestamp::now();
 
@@ -409,6 +457,45 @@ impl Syncer {
         Ok(self.reader().load_related(self.server, change, revision)?)
     }
 
+    /// For grouping list rows by relation chain: the change each row's
+    /// first parent belongs to, when the row's parent is not the current
+    /// patch set of another row (a chain built on an outdated patch set)
+    /// and the row's cached related changes name it. Rows whose related
+    /// changes were never fetched (the change page fetches them) are left
+    /// out. Reads the cache only.
+    pub fn cached_chain_parents(
+        &self,
+        rows: &[ChangeSummary],
+    ) -> Result<HashMap<ChangeNumber, ChangeNumber>, Error> {
+        let current: HashSet<&RevisionId> = rows
+            .iter()
+            .filter_map(|c| c.current_commit.as_ref().map(|k| &k.sha))
+            .collect();
+        let reader = self.reader();
+        let mut out = HashMap::new();
+        for row in rows {
+            let Some(commit) = &row.current_commit else {
+                continue;
+            };
+            let Some(parent) = commit.parents.first() else {
+                continue;
+            };
+            if current.contains(parent) {
+                continue;
+            }
+            let Some(related) = reader.load_related(self.server, row.number, &commit.sha)? else {
+                continue;
+            };
+            if let Some(r) = related.changes.iter().find(|r| {
+                r.number != row.number
+                    && r.commit.as_ref().and_then(|c| c.sha.as_ref()) == Some(parent)
+            }) {
+                out.insert(row.number, r.number);
+            }
+        }
+        Ok(out)
+    }
+
     /// Fetches the changes related to a revision and caches them.
     pub async fn refresh_related(
         &self,
@@ -463,10 +550,14 @@ fn first_page_unchanged(cached: &CachedQuery, fresh: &[ChangeSummary], more: boo
     let Some(prefix) = cached.changes.get(..fresh.len()) else {
         return false;
     };
-    let same = prefix
-        .iter()
-        .zip(fresh)
-        .all(|(a, b)| a.number == b.number && a.updated == b.updated);
+    let same = prefix.iter().zip(fresh).all(|(a, b)| {
+        // A fresh row without the commit did not ask for it (the cache
+        // keeps a known one); one with it must be saved if the cache
+        // lacks it.
+        a.number == b.number
+            && a.updated == b.updated
+            && (b.current_commit.is_none() || a.current_commit == b.current_commit)
+    });
     // `more_changes` of a multi-page cache describes its last page. A
     // longer cache is only consistent with a first page that has a
     // successor.
