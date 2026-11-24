@@ -41,6 +41,7 @@ pub fn summary(n: u64) -> ChangeSummary {
         attention_set: Vec::new(),
         submittable: None,
         mergeable: None,
+        current_commit: None,
     }
 }
 

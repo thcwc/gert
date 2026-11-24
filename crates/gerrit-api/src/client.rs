@@ -1079,6 +1079,43 @@ mod tests {
     }
 
     #[test]
+    fn a_query_with_commits_reads_the_current_sha_and_parents() {
+        let fake = FakeHttpClient::new();
+        fake.push_response(
+            200,
+            xssi(
+                r#"[{"_number": 5, "project": "p", "branch": "main", "change_id": "I5",
+                     "subject": "s", "status": "NEW", "owner": {"_account_id": 1},
+                     "created": "2020-01-02 03:04:05.000000000",
+                     "updated": "2020-01-03 03:04:05.000000000",
+                     "current_revision": "b",
+                     "revisions": {"b": {"_number": 2, "commit": {
+                         "parents": [{"commit": "p1", "subject": "x"}, {"subject": "no sha"}],
+                         "subject": "s"}}}},
+                    {"_number": 6, "project": "p", "branch": "main", "change_id": "I6",
+                     "subject": "s", "status": "NEW", "owner": {"_account_id": 1},
+                     "created": "2020-01-02 03:04:05.000000000",
+                     "updated": "2020-01-03 03:04:05.000000000",
+                     "current_revision": "c", "revisions": {"c": {"_number": 1}}}]"#,
+            ),
+        );
+        let c = client(&fake, "https://h", basic());
+        let q = ChangeQuery::new("owner:self").with_commits().with_commits();
+        let page = block_on(c.query_changes(&q)).unwrap();
+        let commit = page.changes[0].current_commit.as_ref().unwrap();
+        assert_eq!(commit.sha.as_str(), "b");
+        // A parent without a SHA cannot be followed.
+        assert_eq!(commit.parents, vec!["p1".into()]);
+        // Without the commit nothing is known about the parents.
+        assert_eq!(page.changes[1].current_commit, None);
+        let url = fake.requests()[0].uri().to_string();
+        assert!(
+            url.ends_with("&o=SUBMITTABLE&o=CURRENT_REVISION&o=CURRENT_COMMIT"),
+            "{url}"
+        );
+    }
+
+    #[test]
     fn query_converts_and_reports_more_changes() {
         let fake = FakeHttpClient::new();
         let last = CHANGE.replacen('{', r#"{"_more_changes": true,"#, 1);

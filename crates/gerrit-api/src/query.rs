@@ -74,6 +74,17 @@ impl ChangeQuery {
         self.start = Some(s);
         self
     }
+
+    /// Also asks for the current patch set's commit, so that the rows carry
+    /// their SHA and parents ([`model::ChangeSummary::current_commit`]).
+    pub fn with_commits(mut self) -> Self {
+        for o in [ChangeOption::CurrentRevision, ChangeOption::CurrentCommit] {
+            if !self.options.contains(&o) {
+                self.options.push(o);
+            }
+        }
+        self
+    }
 }
 
 /// Query parameters of the file diff endpoint.

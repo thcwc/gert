@@ -41,6 +41,7 @@ fn change(n: u64, updated: &str) -> ChangeSummary {
         attention_set: vec![],
         submittable: None,
         mergeable: None,
+        current_commit: None,
     }
 }
 

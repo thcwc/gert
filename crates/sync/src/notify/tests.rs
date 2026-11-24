@@ -45,6 +45,7 @@ fn detail() -> ChangeDetail {
             attention_set: vec![],
             submittable: None,
             mergeable: None,
+            current_commit: None,
         },
         current_revision: None,
         current_patch_set: None,

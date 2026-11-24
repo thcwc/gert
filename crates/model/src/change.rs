@@ -91,6 +91,21 @@ pub struct ChangeSummary {
     /// this field.
     #[serde(default)]
     pub mergeable: Option<bool>,
+    /// The commit of the current patch set and its parents, when the query
+    /// asked for them (`CURRENT_REVISION` and `CURRENT_COMMIT`, or the
+    /// `ALL_*` options). `None` for plain list queries and in caches from
+    /// before this field.
+    #[serde(default)]
+    pub current_commit: Option<CurrentCommit>,
+}
+
+/// Where a change's current patch set sits in git: enough to tell which
+/// changes of a list are built on which.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurrentCommit {
+    pub sha: RevisionId,
+    /// The parent SHAs, first parent first.
+    pub parents: Vec<RevisionId>,
 }
 
 /// One reviewer's vote on a label (`ApprovalInfo`, `DETAILED_LABELS`).
@@ -234,6 +249,7 @@ mod tests {
                 attention_set: vec![],
                 submittable: None,
                 mergeable: None,
+                current_commit: None,
             },
             current_revision: None,
             current_patch_set: None,

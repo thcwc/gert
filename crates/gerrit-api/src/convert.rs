@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 use model::{
     Account, AccountId, ActionInfo, Actions, AddReviewerResult, AttentionEntry, ChangeDetail,
     ChangeMessage, ChangeNumber, ChangeStatus, ChangeSummary, ChangedChunk, Comment, CommentRange,
-    Commit, CommitParent, ContextLine, Diff, DiffChangeType, DiffChunk, DiffContext, DiffFileMeta,
-    DiffPreferences, DiffViewMode, DraftHandling, DraftInput, DraftReceipt, ExpressionResult,
-    ExpressionStatus, FileEntry, FileStatus, GitPerson, IntralineEdit, IntralineStatus,
-    LabelSummary, LabelValue, LabelVote, Location, PatchSetNumber, RelatedChange, ReviewInput,
-    ReviewResult, Revision, RevisionId, RevisionKind, Side, SubmitRequirement,
+    Commit, CommitParent, ContextLine, CurrentCommit, Diff, DiffChangeType, DiffChunk, DiffContext,
+    DiffFileMeta, DiffPreferences, DiffViewMode, DraftHandling, DraftInput, DraftReceipt,
+    ExpressionResult, ExpressionStatus, FileEntry, FileStatus, GitPerson, IntralineEdit,
+    IntralineStatus, LabelSummary, LabelValue, LabelVote, Location, PatchSetNumber, RelatedChange,
+    ReviewInput, ReviewResult, Revision, RevisionId, RevisionKind, Side, SubmitRequirement,
     SubmitRequirementStatus, SuggestedGroup, SuggestedReviewer, Timestamp, TimestampParseError,
     Whitespace, file_order, parse_gerrit_timestamp,
 };
@@ -301,6 +301,25 @@ pub(crate) fn change_summary(c: &ChangeInfo) -> Result<ChangeSummary, Conversion
         attention_set,
         submittable: c.submittable,
         mergeable: c.mergeable,
+        current_commit: current_commit(c),
+    })
+}
+
+/// The current patch set's commit and parents, when the change info has
+/// that revision's commit (`CURRENT_REVISION` with `CURRENT_COMMIT`, or
+/// the `ALL_*` options). Parents without a SHA cannot be followed and are
+/// left out.
+fn current_commit(c: &ChangeInfo) -> Option<CurrentCommit> {
+    let sha = c.current_revision.as_ref()?;
+    let commit = c.revisions.as_ref()?.get(sha)?.commit.as_ref()?;
+    Some(CurrentCommit {
+        sha: RevisionId::from(sha.as_str()),
+        parents: commit
+            .parents
+            .iter()
+            .flatten()
+            .filter_map(|p| p.commit.as_deref().map(RevisionId::from))
+            .collect(),
     })
 }
 

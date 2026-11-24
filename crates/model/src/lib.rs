@@ -31,7 +31,8 @@ mod timestamp;
 pub use account::Account;
 pub use action::{ActionInfo, Actions, REBASE_ON_BEHALF_OF_UPLOADER, RebaseOptions, action_id};
 pub use change::{
-    AttentionEntry, ChangeDetail, ChangeStatus, ChangeSummary, LabelSummary, LabelVote,
+    AttentionEntry, ChangeDetail, ChangeStatus, ChangeSummary, CurrentCommit, LabelSummary,
+    LabelVote,
 };
 pub use comment::{Comment, CommentRange, ContextLine, Location, PATCHSET_LEVEL_PATH, Side};
 pub use diff::{

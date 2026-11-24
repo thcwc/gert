@@ -630,6 +630,7 @@ fn summary(n: u64, project: &str, change_id: &str) -> ChangeSummary {
         attention_set: vec![],
         submittable: None,
         mergeable: None,
+        current_commit: None,
     }
 }
 

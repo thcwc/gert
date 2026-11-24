@@ -110,6 +110,7 @@ fn summary(n: u64, change_id: &str, branch: &str, status: ChangeStatus) -> Chang
         attention_set: vec![],
         submittable: None,
         mergeable: None,
+        current_commit: None,
     }
 }
 

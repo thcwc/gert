@@ -257,6 +257,7 @@ fn synthesise(
             attention_set: Vec::new(),
             submittable: None,
             mergeable: None,
+            current_commit: None,
         },
         current_revision: newest.map(|r| r.sha.clone()),
         current_patch_set: newest.map(|r| r.number),
