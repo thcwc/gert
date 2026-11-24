@@ -221,6 +221,32 @@ fn a_summary_without_mergeable_keeps_the_known_one_until_updated() {
     assert_eq!(mergeable(&s), None);
 }
 
+#[test]
+fn a_summary_without_its_commit_keeps_the_known_one_until_updated() {
+    let (mut s, id) = store();
+    let commit = |s: &Store| {
+        s.load_query(id, "q").unwrap().unwrap().changes[0]
+            .current_commit
+            .clone()
+    };
+    let known = model::CurrentCommit {
+        sha: "b".into(),
+        parents: vec!["a".into()],
+    };
+    let mut with_commit = change(5, T1);
+    with_commit.current_commit = Some(known.clone());
+    s.save_query_page(id, "q", &[with_commit], false, ts(T1))
+        .unwrap();
+    // Another query, one that does not ask for commits, lists the change.
+    s.save_query_page(id, "other", &[change(5, T1)], false, ts(T1))
+        .unwrap();
+    assert_eq!(commit(&s), Some(known));
+    // A new patch set updates the change: its commit is not known.
+    s.save_query_page(id, "other", &[change(5, T2)], false, ts(T2))
+        .unwrap();
+    assert_eq!(commit(&s), None);
+}
+
 fn db_at_version(version: usize) -> Connection {
     let mut conn = Connection::open_in_memory().unwrap();
     migrate(&mut conn, &MIGRATIONS[..version]).unwrap();

@@ -597,16 +597,23 @@ fn parse_ts(s: &str) -> Result<Timestamp, Error> {
     s.parse().map_err(|_| Error::BadTimestamp(s.to_owned()))
 }
 
-/// Saves a change's summary. A summary without `mergeable` keeps the cached
-/// one's while the change has not been updated since: servers may leave it
-/// out of query results, and only the change detail asks for it, so a
-/// query refresh must not forget what opening the change learned.
+/// Saves a change's summary. A summary without `mergeable` or
+/// `current_commit` keeps the cached one's while the change has not been
+/// updated since: servers may leave `mergeable` out of query results, and
+/// only some queries ask for the commit, so a refresh that did not ask
+/// must not forget what another one learned. A new patch set updates the
+/// change, so a kept commit is never one of an older patch set.
 fn upsert_change(tx: &Transaction<'_>, server: ServerId, c: &ChangeSummary) -> Result<(), Error> {
     let mut c = Cow::Borrowed(c);
-    if c.mergeable.is_none()
-        && let Some(m) = cached_mergeable(tx, server, &c)?
+    if (c.mergeable.is_none() || c.current_commit.is_none())
+        && let Some(cached) = cached_same_update(tx, server, &c)?
     {
-        c.to_mut().mergeable = Some(m);
+        if c.mergeable.is_none() && cached.mergeable.is_some() {
+            c.to_mut().mergeable = cached.mergeable;
+        }
+        if c.current_commit.is_none() && cached.current_commit.is_some() {
+            c.to_mut().current_commit = cached.current_commit;
+        }
     }
     tx.prepare_cached(
         "INSERT INTO changes (server_id, number, updated, json) VALUES (?1, ?2, ?3, ?4)
@@ -622,13 +629,12 @@ fn upsert_change(tx: &Transaction<'_>, server: ServerId, c: &ChangeSummary) -> R
     Ok(())
 }
 
-/// The cached `mergeable` of `c`, if the cached summary has the same
-/// `updated`.
-fn cached_mergeable(
+/// The cached summary of `c`, if it has the same `updated`.
+fn cached_same_update(
     tx: &Transaction<'_>,
     server: ServerId,
     c: &ChangeSummary,
-) -> Result<Option<bool>, Error> {
+) -> Result<Option<ChangeSummary>, Error> {
     let json: Option<String> = tx
         .prepare_cached(
             "SELECT json FROM changes WHERE server_id = ?1 AND number = ?2 AND updated = ?3",
@@ -638,11 +644,8 @@ fn cached_mergeable(
             |r| r.get(0),
         )
         .optional()?;
-    let Some(json) = json else {
-        return Ok(None);
-    };
-    let cached: ChangeSummary = serde_json::from_str(&json)?;
-    Ok(cached.mergeable)
+    json.map(|json| serde_json::from_str(&json).map_err(Error::from))
+        .transpose()
 }
 
 fn insert_items(
