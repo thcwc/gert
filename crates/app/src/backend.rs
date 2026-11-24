@@ -30,10 +30,7 @@ pub struct AppBackend {
 pub fn queries_to_ui(queries: &[QueryConfig]) -> Vec<SavedQuery> {
     queries
         .iter()
-        .map(|q| SavedQuery {
-            name: q.name.clone(),
-            query: q.query.clone(),
-        })
+        .map(|q| SavedQuery::new(q.name.clone(), q.query.clone()))
         .collect()
 }
 
@@ -492,10 +489,7 @@ mod tests {
             "# mine\n[server]\nurl = \"https://g\" # prod\n\n[[queries]]\nname = \"A\"\nquery = \"x\"\n",
         )
         .unwrap();
-        let new = [SavedQuery {
-            name: "B".into(),
-            query: "y".into(),
-        }];
+        let new = [SavedQuery::new("B", "y")];
         assert_eq!(b.server("g").save_queries(&new).unwrap(), new);
         let text = std::fs::read_to_string(&b.config_file).unwrap();
         assert!(text.contains("# mine") && text.contains("# prod"), "{text}");
@@ -518,10 +512,7 @@ mod tests {
             "# mine\n[server]\nurl = \"https://g\" # prod\n\n[[queries]]\nname = \"A\"\nquery = \"x\"\n",
         )
         .unwrap();
-        let new = [SavedQuery {
-            name: "Mine".into(),
-            query: "owner:self".into(),
-        }];
+        let new = [SavedQuery::new("Mine", "owner:self")];
         assert_eq!(b.server("g").save_bookmarks(&new).unwrap(), new);
         let text = std::fs::read_to_string(&b.config_file).unwrap();
         assert!(text.contains("# mine") && text.contains("# prod"), "{text}");
@@ -714,10 +705,7 @@ action = "dim"
     }
 
     fn saved(name: &str, query: &str) -> SavedQuery {
-        SavedQuery {
-            name: name.into(),
-            query: query.into(),
-        }
+        SavedQuery::new(name, query)
     }
 
     #[test]

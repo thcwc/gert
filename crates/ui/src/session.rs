@@ -24,6 +24,15 @@ pub struct SavedQuery {
     pub query: String,
 }
 
+impl SavedQuery {
+    pub fn new(name: impl Into<String>, query: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            query: query.into(),
+        }
+    }
+}
+
 /// The local checkout of one Gerrit project (`[[servers.projects]]`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProjectSettings {

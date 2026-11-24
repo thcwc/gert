@@ -542,10 +542,7 @@ fn shell_with_many_files(
         start_page: Default::default(),
         filters: Vec::new(),
         servers: vec![crate::session::ServerSetup {
-            queries: vec![crate::session::SavedQuery {
-                name: "Open".into(),
-                query: "status:open".into(),
-            }],
+            queries: vec![crate::session::SavedQuery::new("Open", "status:open")],
             bookmarks: Vec::new(),
             ..setup()
         }],

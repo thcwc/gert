@@ -461,10 +461,7 @@ mod tests {
 
     #[test]
     fn query_names_of_all_servers_are_listed_once() {
-        let q = |n: &str| crate::session::SavedQuery {
-            name: n.into(),
-            query: "q".into(),
-        };
+        let q = |n: &str| crate::session::SavedQuery::new(n, "q");
         let mut a = server("a");
         a.queries = vec![q("Open"), q("Team")];
         let mut b = server("b");
@@ -478,10 +475,8 @@ mod tests {
     fn upsert_keeps_the_order_and_the_other_entries() {
         let key = ServerKey::new;
         let mut s = Servers::new(vec![server("a"), server("b")], None);
-        s.get_mut(&key("b")).expect("b").setup.queries = vec![crate::session::SavedQuery {
-            name: "Q".into(),
-            query: "q".into(),
-        }];
+        s.get_mut(&key("b")).expect("b").setup.queries =
+            vec![crate::session::SavedQuery::new("Q", "q")];
         s.upsert(ServerSetup {
             name: "A2".into(),
             ..server("a")

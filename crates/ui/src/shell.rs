@@ -1161,10 +1161,7 @@ impl Shell {
                 )
             }
             (Route::Search(q), Some(session)) => {
-                let spec = vec![SavedQuery {
-                    name: "Search".into(),
-                    query: q,
-                }];
+                let spec = vec![SavedQuery::new("Search", q)];
                 self.list_page(session, ListKind::Search, spec, restore, active, window, cx)
             }
             (Route::Settings, Some(_)) => self.settings_page(window, cx),

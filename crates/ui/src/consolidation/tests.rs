@@ -200,10 +200,7 @@ fn start(cx: &mut TestAppContext, f: &Fixture, username: Option<&str>) -> Starte
         filters: Vec::new(),
         servers: vec![ServerSetup {
             username: username.map(str::to_owned),
-            queries: vec![SavedQuery {
-                name: "Open".into(),
-                query: "status:open".into(),
-            }],
+            queries: vec![SavedQuery::new("Open", "status:open")],
             projects: vec![f.project()],
             ..setup()
         }],
@@ -1159,10 +1156,7 @@ fn the_note_stays_off_another_servers_page(cx: &mut TestAppContext) {
         servers: vec![
             ServerSetup {
                 username: Some("u".into()),
-                queries: vec![SavedQuery {
-                    name: "Open".into(),
-                    query: "status:open".into(),
-                }],
+                queries: vec![SavedQuery::new("Open", "status:open")],
                 projects: vec![f.project()],
                 ..setup()
             },

@@ -225,10 +225,7 @@ pub(crate) fn validate(name: &str, query: &str) -> Result<SavedQuery, &'static s
     } else if query.is_empty() {
         Err("Enter the query text.")
     } else {
-        Ok(SavedQuery {
-            name: name.to_owned(),
-            query: query.to_owned(),
-        })
+        Ok(SavedQuery::new(name, query))
     }
 }
 
@@ -2070,10 +2067,7 @@ mod tests {
     use crate::session::SavedQuery;
 
     fn q(n: &str) -> SavedQuery {
-        SavedQuery {
-            name: n.into(),
-            query: format!("q:{n}"),
-        }
+        SavedQuery::new(n, format!("q:{n}"))
     }
 
     fn names(l: &[SavedQuery]) -> Vec<&str> {
@@ -2087,10 +2081,7 @@ mod tests {
         assert_eq!(validate("Open", " "), Err("Enter the query text."));
         assert_eq!(
             validate(" Open ", " is:open "),
-            Ok(SavedQuery {
-                name: "Open".into(),
-                query: "is:open".into()
-            })
+            Ok(SavedQuery::new("Open", "is:open"))
         );
     }
 

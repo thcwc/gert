@@ -56,10 +56,7 @@ fn fixture(
     });
     let mut env = env_with(store, &FakeHttpClient::new());
     env.backend = backend.clone();
-    let query = |name: &str| SavedQuery {
-        name: name.into(),
-        query: "status:open".into(),
-    };
+    let query = |name: &str| SavedQuery::new(name, "status:open");
     let startup = Startup {
         env,
         diff: Default::default(),

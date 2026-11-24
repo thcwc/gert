@@ -146,10 +146,7 @@ fn on_the_change_in(cx: &mut TestAppContext, rules: Vec<FileFilter>, second: boo
         start_page: Default::default(),
         filters: rules,
         servers: std::iter::once(ServerSetup {
-            queries: vec![SavedQuery {
-                name: "Open".into(),
-                query: "status:open".into(),
-            }],
+            queries: vec![SavedQuery::new("Open", "status:open")],
             bookmarks: Vec::new(),
             ..setup()
         })

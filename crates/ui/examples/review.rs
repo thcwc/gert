@@ -1228,10 +1228,7 @@ fn main() {
                 key: ui::ServerKey::new(NAMES[i]),
                 name: NAMES[i].into(),
                 color: None,
-                queries: vec![SavedQuery {
-                    name: "Open changes".into(),
-                    query: "status:open".into(),
-                }],
+                queries: vec![SavedQuery::new("Open changes", "status:open")],
                 bookmarks: Vec::new(),
                 projects: Vec::new(),
             }

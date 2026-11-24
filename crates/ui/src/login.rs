@@ -310,10 +310,7 @@ pub(crate) mod tests {
                 user.map(Into::into),
                 pass.map(Into::into),
             ));
-            Ok(vec![SavedQuery {
-                name: "All".into(),
-                query: "status:open".into(),
-            }])
+            Ok(vec![SavedQuery::new("All", "status:open")])
         }
     }
 

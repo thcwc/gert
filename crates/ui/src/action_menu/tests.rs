@@ -912,10 +912,7 @@ mod in_the_shell {
             filters: Vec::new(),
             servers: vec![ServerSetup {
                 username: username.map(str::to_owned),
-                queries: vec![SavedQuery {
-                    name: "Open".into(),
-                    query: "status:open".into(),
-                }],
+                queries: vec![SavedQuery::new("Open", "status:open")],
                 bookmarks: Vec::new(),
                 projects,
                 ..setup()
@@ -1094,10 +1091,7 @@ mod in_the_shell {
             filters: Vec::new(),
             servers: vec![ServerSetup {
                 username: Some("bob".into()),
-                queries: vec![SavedQuery {
-                    name: "Open".into(),
-                    query: "status:open".into(),
-                }],
+                queries: vec![SavedQuery::new("Open", "status:open")],
                 bookmarks: Vec::new(),
                 ..setup()
             }],

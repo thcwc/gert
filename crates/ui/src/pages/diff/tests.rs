@@ -584,10 +584,7 @@ fn shell_flow_with(
         start_page: Default::default(),
         filters: Vec::new(),
         servers: vec![crate::session::ServerSetup {
-            queries: vec![SavedQuery {
-                name: "Open".into(),
-                query: "status:open".into(),
-            }],
+            queries: vec![SavedQuery::new("Open", "status:open")],
             bookmarks: Vec::new(),
             ..setup()
         }],

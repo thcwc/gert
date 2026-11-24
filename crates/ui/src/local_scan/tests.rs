@@ -123,10 +123,7 @@ fn start_with(
         filters: Vec::new(),
         servers: vec![ServerSetup {
             username: username.map(str::to_owned),
-            queries: vec![SavedQuery {
-                name: "Open".into(),
-                query: "status:open".into(),
-            }],
+            queries: vec![SavedQuery::new("Open", "status:open")],
             projects: vec![f.project(local_changes)],
             ..setup()
         }],
@@ -599,10 +596,7 @@ fn every_state_renders_and_j_k_cross_into_the_queries(cx: &mut TestAppContext) {
         .expect("reconcile");
     let env = env_with(store, &RouteHttpClient::new());
     let session = Session::new(&env, &setup(), None).expect("session");
-    let specs = vec![SavedQuery {
-        name: "Open".into(),
-        query: "status:open".into(),
-    }];
+    let specs = vec![SavedQuery::new("Open", "status:open")];
     let (window, page) = open(cx, |window, cx| {
         let checkouts = cx.new(|_| Checkouts::new(Vec::new()));
         // Without a session the scanner never runs a round.
@@ -742,10 +736,7 @@ fn closed_and_held_rows_show_their_gerrit_number_and_open_that_change(cx: &mut T
         .expect("held");
     let env = env_with(store, &RouteHttpClient::new());
     let session = Session::new(&env, &setup(), None).expect("session");
-    let specs = vec![SavedQuery {
-        name: "Open".into(),
-        query: "status:open".into(),
-    }];
+    let specs = vec![SavedQuery::new("Open", "status:open")];
     let (window, page) = open(cx, |window, cx| {
         let checkouts = cx.new(|_| Checkouts::new(Vec::new()));
         let scanner = cx.new(|cx| LocalScanner::new(checkouts, cx));
@@ -916,10 +907,7 @@ fn search_page(
 ) -> (AnyWindowHandle, Entity<ChangeListPage>) {
     let env = env_with(store, &RouteHttpClient::new());
     let session = Session::new(&env, &setup(), None).expect("session");
-    let specs = vec![SavedQuery {
-        name: "Search".into(),
-        query: query.into(),
-    }];
+    let specs = vec![SavedQuery::new("Search", query)];
     let (window, page) = open(cx, |window, cx| {
         let checkouts = cx.new(|_| Checkouts::new(Vec::new()));
         let scanner = cx.new(|cx| LocalScanner::new(checkouts, cx));

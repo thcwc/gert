@@ -67,10 +67,7 @@ fn seeded(queries: &[(&str, &[u64])]) -> Store {
 }
 
 fn spec(name: &str, query: &str) -> SavedQuery {
-    SavedQuery {
-        name: name.into(),
-        query: query.into(),
-    }
+    SavedQuery::new(name, query)
 }
 
 pub(crate) fn open<V: gpui_kit::Render + 'static>(
