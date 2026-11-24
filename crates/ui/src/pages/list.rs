@@ -21,11 +21,11 @@ use gpui_kit::*;
 use jiff::{Timestamp, tz::TimeZone};
 use model::{ChangeNumber, ChangeSummary, LocalChange, LocalChangeState};
 use store::CachedQuery;
-use sync::{PollPolicy, PollState, RowDetail, Syncer, local::search::LocalQuery};
+use sync::{ChainLink, PollPolicy, PollState, RowDetail, Syncer, local::search::LocalQuery};
 
 use crate::{
     actions::*,
-    chain_groups::{ChainPlace, group_by_chain},
+    chain_groups::{ChainPlace, Shown, group_by_chain},
     change_detail::change_label,
     labels::{label_columns, mark, short_name},
     list_model::{DASHBOARD_ROWS, ListModel, PAGE_SIZE, Pager},
@@ -104,16 +104,16 @@ impl Section {
         }
     }
 
-    fn apply(&mut self, (cached, outdated): Read) {
+    fn apply(&mut self, (cached, links): Read) {
         self.rows = cached.changes;
         self.more_on_server = cached.more_changes;
         self.fetched_at = Some(cached.fetched_at);
         self.grouped = (self.spec.group == QueryGroup::Chain).then(|| {
             let rows = &self.rows[..self.rows.len().min(DASHBOARD_ROWS)];
-            let order = group_by_chain(rows, &outdated);
+            let shown = group_by_chain(rows, &links);
             Grouped {
-                rows: order.iter().map(|(i, _)| rows[*i].clone()).collect(),
-                places: order.into_iter().map(|(_, p)| p).collect(),
+                rows: shown.iter().map(|s| rows[s.index].clone()).collect(),
+                shown,
             }
         });
     }
@@ -122,7 +122,7 @@ impl Section {
     fn chained(&self) -> bool {
         self.grouped
             .as_ref()
-            .is_some_and(|g| g.places.iter().any(Option::is_some))
+            .is_some_and(|g| g.shown.iter().any(|s| s.place.is_some()))
     }
 
     fn row_detail(&self) -> RowDetail {
@@ -136,15 +136,16 @@ impl Section {
 /// A dashboard section's rows grouped by relation chain.
 struct Grouped {
     rows: Vec<ChangeSummary>,
-    /// Each row's place in its chain, `None` for a row alone.
-    places: Vec<Option<ChainPlace>>,
+    /// Each row's place in its chain.
+    shown: Vec<Shown>,
 }
 
-/// Changes built on an outdated patch set of another row, and that row.
-type OutdatedLinks = HashMap<ChangeNumber, ChangeNumber>;
+/// Rows whose parent is not another row, linked through the cached
+/// related changes.
+type Links = HashMap<ChangeNumber, ChainLink>;
 
 /// A cached result as a section takes it.
-type Read = (CachedQuery, OutdatedLinks);
+type Read = (CachedQuery, Links);
 
 /// Reads the cached result of `spec` (blocking), and for chain grouping the
 /// links that only the cached related changes know.
@@ -152,12 +153,12 @@ fn read_section(syncer: &Syncer, spec: &SavedQuery) -> Result<Option<Read>, sync
     let Some(cached) = syncer.cached_query(&spec.query)? else {
         return Ok(None);
     };
-    let outdated = match spec.group {
+    let links = match spec.group {
         QueryGroup::Flat => HashMap::new(),
         QueryGroup::Chain => syncer
-            .cached_chain_parents(&cached.changes[..cached.changes.len().min(DASHBOARD_ROWS)])?,
+            .cached_chain_links(&cached.changes[..cached.changes.len().min(DASHBOARD_ROWS)])?,
     };
-    Ok(Some((cached, outdated)))
+    Ok(Some((cached, links)))
 }
 
 // Column widths in pixels. Owner, project and branch shrink first when the
@@ -176,6 +177,12 @@ type Fetched = Result<(sync::QueryUpdate, Option<Read>), sync::Error>;
 
 /// Width of the chain column of a grouped section.
 const W_CHAIN: f32 = 10.;
+
+/// Related changes a grouped section fetches per refresh at most, to link
+/// the pieces of its chains. One covers a whole chain, and each is cached
+/// until its change gets a new patch set, so this only spreads the first
+/// load over a few polls.
+const RELATED_PER_REFRESH: usize = 10;
 
 /// The selection model's section of the local changes. The query sections
 /// follow it ([`query_section`]).
@@ -453,7 +460,14 @@ impl ChangeListPage {
                     let update = syncer
                         .refresh_query_with(&spec.query, limit, detail)
                         .await?;
-                    let cached = if update.changed {
+                    let fetched = match (spec.group, syncer.cached_query(&spec.query)?) {
+                        (QueryGroup::Chain, Some(c)) => {
+                            let rows = &c.changes[..c.changes.len().min(DASHBOARD_ROWS)];
+                            syncer.fetch_chain_related(rows, RELATED_PER_REFRESH).await
+                        }
+                        _ => 0,
+                    };
+                    let cached = if update.changed || fetched > 0 {
                         read_section(&syncer, &spec)?
                     } else {
                         None
@@ -809,13 +823,13 @@ impl ChangeListPage {
     }
 
     /// A change row. `chain` is the row's place in a chain when the
-    /// section draws the chain column (`Some(None)`: a row alone there).
+    /// section draws the chain column.
     #[allow(clippy::too_many_arguments)]
     fn render_row(
         &self,
         (section, row): (usize, usize),
         c: &ChangeSummary,
-        chain: Option<Option<ChainPlace>>,
+        chain: Option<Shown>,
         cols: &[String],
         now: Timestamp,
         selected: bool,
@@ -847,7 +861,7 @@ impl ChangeListPage {
                 cx.emit(ListEvent::Open(number));
             }))
             .child(cell(W_NUM).text_color(muted).child(c.number.to_string()))
-            .children(chain.map(|place| chain_mark(place, muted)))
+            .children(chain.map(|s| chain_mark(s.place, s.hidden_below > 0, muted)))
             .child(
                 h_flex()
                     .flex_1()
@@ -865,7 +879,15 @@ impl ChangeListPage {
                             .bg(bg)
                             .child(chip.text())
                     }))
-                    .child(div().min_w_0().truncate().child(c.subject.clone())),
+                    .child(div().min_w_0().truncate().child(c.subject.clone()))
+                    .children(chain.filter(|s| s.hidden_below > 0).map(|s| {
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(muted)
+                            .debug_selector(move || format!("chain-hidden-{}", s.hidden_below))
+                            .child(format!("+{} below, not listed", s.hidden_below))
+                    })),
             )
             .child(shrinking(W_OWNER).child(search_link(
                 ("owner-link", section * 10_000 + row),
@@ -1251,22 +1273,32 @@ impl ChangeListPage {
 /// chain, like a commit graph. The line runs into the row padding and over
 /// the separator, so that it is unbroken from the tip to the base; it
 /// stops at the dot of the tip and of the base, so neighbouring chains
-/// stay apart. Empty for a row alone.
-fn chain_mark(place: Option<ChainPlace>, color: Hsla) -> impl IntoElement {
+/// stay apart. Below a row with changes of the chain that are not listed
+/// (`gap_below`) it is faint. Empty for a row alone.
+fn chain_mark(place: Option<ChainPlace>, gap_below: bool, color: Hsla) -> impl IntoElement {
     // The row's vertical padding (`py_1`), and its separator above.
     const PAD: f32 = 4.;
     const DOT: f32 = 6.;
-    let line = |place: ChainPlace| {
-        let d = div()
+    let segment = |opacity: f32| {
+        div()
             .absolute()
             .left(px((W_CHAIN - 2.) / 2.))
             .w(px(2.))
-            .bg(color.opacity(0.6));
-        match place {
-            ChainPlace::Tip => d.top(gpui_kit::relative(0.5)).bottom(px(-PAD)),
-            ChainPlace::Middle => d.top(px(-PAD - 1.)).bottom(px(-PAD)),
-            ChainPlace::Base => d.top(px(-PAD - 1.)).bottom(gpui_kit::relative(0.5)),
-        }
+            .bg(color.opacity(opacity))
+    };
+    let above = |place| {
+        matches!(place, ChainPlace::Middle | ChainPlace::Base).then(|| {
+            segment(0.6)
+                .top(px(-PAD - 1.))
+                .bottom(gpui_kit::relative(0.5))
+        })
+    };
+    let below = |place| {
+        matches!(place, ChainPlace::Tip | ChainPlace::Middle).then(|| {
+            segment(if gap_below { 0.2 } else { 0.6 })
+                .top(gpui_kit::relative(0.5))
+                .bottom(px(-PAD))
+        })
     };
     div()
         .relative()
@@ -1278,7 +1310,8 @@ fn chain_mark(place: Option<ChainPlace>, color: Hsla) -> impl IntoElement {
         .justify_center()
         .when_some(place, |d, place| {
             d.debug_selector(move || format!("chain-{place:?}"))
-                .child(line(place))
+                .children(above(place))
+                .children(below(place))
                 .child(div().size(px(DOT)).rounded_full().bg(color))
         })
 }
@@ -1331,10 +1364,10 @@ impl Render for ChangeListPage {
             let title = self.render_section_header(i, now, cx).into_any_element();
             body = body.child(crate::card::frame(title, true, false, cx));
             let chained = self.sections[i].chained();
-            let places = self.sections[i]
+            let shown = self.sections[i]
                 .grouped
                 .as_ref()
-                .map(|g| g.places.clone())
+                .map(|g| g.shown.clone())
                 .filter(|_| chained);
             let head = self.render_header(&cols, chained, cx).into_any_element();
             body = body.child(crate::card::frame(head, false, false, cx));
@@ -1364,7 +1397,7 @@ impl Render for ChangeListPage {
                     .render_row(
                         (i, r),
                         c,
-                        places.as_ref().map(|p| p.get(r).copied().flatten()),
+                        shown.as_ref().and_then(|s| s.get(r).copied()),
                         &cols,
                         now,
                         selected == Some((query_section(i), r)),

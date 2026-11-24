@@ -132,9 +132,10 @@ fn dashboard_shows_cached_rows_and_j_k_cross_sections(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_dashboard_section_groups_its_rows_by_relation_chain(cx: &mut TestAppContext) {
     use crate::session::QueryGroup;
-    // Server order: 9 alone, 1 the base of 1 <- 2 <- 3, where 3 is still
-    // on patch set 1 of 2 ("b-old"). Cached without commits, as a plain
-    // query would leave them.
+    // Server order: 9 alone, 1 the base of 1 <- 10 <- 2 <- 3, where 3 is
+    // still on patch set 1 of 2 ("b-old") and 10 is not listed. Cached
+    // without commits, as a plain query would leave them. 3's related
+    // changes are cached (its change page was open).
     let mut store = seeded(&[("mine", &[9, 1, 3, 2])]);
     let related = model::RelatedChange {
         project: "platform/foo".into(),
@@ -184,8 +185,25 @@ fn a_dashboard_section_groups_its_rows_by_relation_chain(cx: &mut TestAppContext
                 row(9, "i", "main"),
                 row(1, "a", "main"),
                 row(3, "c", "b-old"),
-                row(2, "b", "a")
+                row(2, "b", "x")
             ])
+        ),
+    );
+    // The section asks for the related changes it misses: 9's (none), and
+    // 1's, which cover 2 as well.
+    http.push_response(200, ")]}'\n{\"changes\": []}");
+    let entry = |n: u64, sha: &str, parent: &str| {
+        serde_json::json!({"project": "platform/foo", "_change_number": n,
+            "_revision_number": 1,
+            "commit": {"commit": sha, "parents": [{"commit": parent}]}})
+    };
+    http.push_response(
+        200,
+        format!(
+            ")]}}'\n{}",
+            serde_json::json!({"changes": [
+                entry(2, "b", "x"), entry(10, "x", "a"), entry(1, "a", "main")
+            ]})
         ),
     );
     let env = env_with(store, &http);
@@ -203,6 +221,19 @@ fn a_dashboard_section_groups_its_rows_by_relation_chain(cx: &mut TestAppContext
     });
     cx.run_until_parked();
 
+    let asked: Vec<String> = http
+        .requests()
+        .iter()
+        .map(|r| r.uri().path().to_owned())
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            "/changes/",
+            "/changes/9/revisions/i/related",
+            "/changes/1/revisions/a/related"
+        ]
+    );
     let url = http.requests()[0].uri().to_string();
     assert!(url.contains("o=CURRENT_COMMIT"), "{url}");
     let shown = |cx: &mut TestAppContext| -> Vec<u64> {
@@ -216,7 +247,7 @@ fn a_dashboard_section_groups_its_rows_by_relation_chain(cx: &mut TestAppContext
     };
     assert_eq!(shown(cx), [9, 3, 2, 1]);
     let mut visual = gpui_kit::VisualTestContext::from_window(window, cx);
-    for place in ["chain-Tip", "chain-Middle", "chain-Base"] {
+    for place in ["chain-Tip", "chain-Middle", "chain-Base", "chain-hidden-1"] {
         assert!(visual.debug_bounds(place).is_some(), "{place}");
     }
     // j / k follow the rows as shown.

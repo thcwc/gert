@@ -182,42 +182,89 @@ fn a_refresh_with_commits_fills_a_cache_without_them() {
 }
 
 #[test]
-fn chain_parents_come_from_the_cached_related_changes() {
+fn chain_links_bridge_changes_the_rows_leave_out() {
     let f = fixture();
-    // 3 is built on patch set 1 of 2 ("old"), which has moved on to "b";
-    // 2 is built on 1. 4 is built on something no row is.
+    // The chain m <- a(1) <- b(2) <- c(3) <- d(4) <- e(5) <- f(6), and 7
+    // still on patch set 1 of 6 ("f1"; 6 is now at "f2"). The query lists
+    // 7, 6, 5, 2 and 9, which has no chain.
     f.http.push_response(
         200,
         page_with_commits(&[
-            (3, U1, "c", "old"),
+            (7, U1, "g", "f1"),
+            (6, U1, "f2", "e"),
+            (5, U1, "e", "d"),
             (2, U1, "b", "a"),
-            (1, U1, "a", "m"),
-            (4, U1, "d", "x"),
+            (9, U1, "i", "main"),
         ]),
     );
     block_on(f.syncer.refresh_query_with("q", 25, RowDetail::Commits)).unwrap();
     let rows = f.syncer.cached_query("q").unwrap().unwrap().changes;
-    // Nothing cached yet.
-    assert!(f.syncer.cached_chain_parents(&rows).unwrap().is_empty());
+    assert!(f.syncer.cached_chain_links(&rows).unwrap().is_empty());
+
+    let entry = |n: u64, sha: &str, parent: &str| {
+        json!({"project": "p", "_change_number": n, "_revision_number": 1,
+               "commit": {"commit": sha, "parents": [{"commit": parent}]}})
+    };
     f.http.push_response(
         200,
         xssi(&json!({"changes": [
-            {"project": "p", "_change_number": 3, "_revision_number": 1,
-             "commit": {"commit": "c", "parents": [{"commit": "old"}]}},
-            {"project": "p", "_change_number": 2, "_revision_number": 1,
-             "_current_revision_number": 2,
-             "commit": {"commit": "old", "parents": [{"commit": "a"}]}},
-            {"project": "p", "_change_number": 1, "_revision_number": 1,
-             "commit": {"commit": "a", "parents": [{"commit": "m"}]}}
+            entry(7, "g", "f1"), entry(6, "f1", "e"), entry(5, "e", "d"),
+            entry(4, "d", "c"), entry(3, "c", "b"), entry(2, "b", "a"),
+            entry(1, "a", "m")
         ]})),
     );
-    block_on(f.syncer.refresh_related(ChangeNumber(3), &"c".into())).unwrap();
-    let parents = f.syncer.cached_chain_parents(&rows).unwrap();
+    f.http.push_response(200, xssi(&json!({"changes": []})));
+    let before = f.http.requests().len();
+    // 7's list covers 5 and 2 too; 6 is on a row; 9 needs its own.
+    assert_eq!(block_on(f.syncer.fetch_chain_related(&rows, 10)), 2);
+    let asked: Vec<String> = f.http.requests()[before..]
+        .iter()
+        .map(|r| r.uri().path().to_owned())
+        .collect();
     assert_eq!(
-        parents,
-        HashMap::from([(ChangeNumber(3), ChangeNumber(2))]),
-        "2 on 1 is plain from the rows; 4 has nothing cached"
+        asked,
+        [
+            "/changes/7/revisions/g/related",
+            "/changes/9/revisions/i/related"
+        ]
     );
+    // Everything is cached now, also that 9 has no chain.
+    assert_eq!(block_on(f.syncer.fetch_chain_related(&rows, 10)), 0);
+
+    let links = f.syncer.cached_chain_links(&rows).unwrap();
+    let link = |parent: u64, skipped: usize| ChainLink {
+        parent: ChangeNumber(parent),
+        skipped,
+    };
+    assert_eq!(
+        links,
+        HashMap::from([
+            // On an outdated patch set of 6.
+            (ChangeNumber(7), link(6, 0)),
+            // 4 and 3 are not rows.
+            (ChangeNumber(5), link(2, 2)),
+        ]),
+        "6 is plainly on 5; 2 and 9 have no row below them"
+    );
+}
+
+#[test]
+fn chain_related_fetches_stop_at_the_limit_and_survive_failures() {
+    let f = fixture();
+    f.http.push_response(
+        200,
+        page_with_commits(&[(3, U1, "c", "x"), (2, U1, "b", "y"), (1, U1, "a", "z")]),
+    );
+    block_on(f.syncer.refresh_query_with("q", 25, RowDetail::Commits)).unwrap();
+    let rows = f.syncer.cached_query("q").unwrap().unwrap().changes;
+    f.http.push_response(500, "boom");
+    f.http.push_response(200, xssi(&json!({"changes": []})));
+    assert_eq!(block_on(f.syncer.fetch_chain_related(&rows, 2)), 2);
+    // 3 failed and is asked again, 2 is cached, 1 was over the limit.
+    f.http.push_response(200, xssi(&json!({"changes": []})));
+    f.http.push_response(200, xssi(&json!({"changes": []})));
+    assert_eq!(block_on(f.syncer.fetch_chain_related(&rows, 10)), 2);
+    assert_eq!(block_on(f.syncer.fetch_chain_related(&rows, 10)), 0);
 }
 
 #[test]

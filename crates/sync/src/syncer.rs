@@ -457,43 +457,122 @@ impl Syncer {
         Ok(self.reader().load_related(self.server, change, revision)?)
     }
 
-    /// For grouping list rows by relation chain: the change each row's
-    /// first parent belongs to, when the row's parent is not the current
-    /// patch set of another row (a chain built on an outdated patch set)
-    /// and the row's cached related changes name it. Rows whose related
-    /// changes were never fetched (the change page fetches them) are left
-    /// out. Reads the cache only.
-    pub fn cached_chain_parents(
+    /// For grouping list rows by relation chain: for each row whose
+    /// parent is not the current patch set of another row, the nearest
+    /// row below it in its chain, from cached related changes. That covers
+    /// a chain built on an outdated patch set, and one the rows show only
+    /// parts of: a long chain whose changes the query lists out of order,
+    /// or not all of. Reads the cache only; [`Syncer::fetch_chain_related`]
+    /// fills it.
+    pub fn cached_chain_links(
         &self,
         rows: &[ChangeSummary],
-    ) -> Result<HashMap<ChangeNumber, ChangeNumber>, Error> {
+    ) -> Result<HashMap<ChangeNumber, ChainLink>, Error> {
+        let lists = self.cached_related_of(rows)?;
         let current: HashSet<&RevisionId> = rows
             .iter()
             .filter_map(|c| c.current_commit.as_ref().map(|k| &k.sha))
             .collect();
-        let reader = self.reader();
+        let numbers: HashSet<ChangeNumber> = rows.iter().map(|c| c.number).collect();
         let mut out = HashMap::new();
         for row in rows {
             let Some(commit) = &row.current_commit else {
                 continue;
             };
-            let Some(parent) = commit.parents.first() else {
-                continue;
-            };
-            if current.contains(parent) {
+            if commit.parents.first().is_none_or(|p| current.contains(p)) {
                 continue;
             }
-            let Some(related) = reader.load_related(self.server, row.number, &commit.sha)? else {
+            let Some(list) = list_with(&lists, row.number, &commit.sha) else {
                 continue;
             };
-            if let Some(r) = related.changes.iter().find(|r| {
-                r.number != row.number
-                    && r.commit.as_ref().and_then(|c| c.sha.as_ref()) == Some(parent)
-            }) {
-                out.insert(row.number, r.number);
+            // Down the first parents, through changes that are not rows.
+            let mut parent = commit.parents.first();
+            let mut skipped = 0;
+            while let Some(sha) = parent {
+                let Some(entry) = list.iter().find(|r| related_sha(r) == Some(sha)) else {
+                    break;
+                };
+                if entry.number != row.number && numbers.contains(&entry.number) {
+                    out.insert(
+                        row.number,
+                        ChainLink {
+                            parent: entry.number,
+                            skipped,
+                        },
+                    );
+                    break;
+                }
+                skipped += 1;
+                parent = entry
+                    .commit
+                    .as_ref()
+                    .and_then(|c| c.parents.first())
+                    .map(|p| &p.sha);
             }
         }
         Ok(out)
+    }
+
+    /// Fetches the related changes [`Syncer::cached_chain_links`] needs:
+    /// those of rows whose parent is not another row and whose current
+    /// patch set no cached related changes of the rows list. One fetch
+    /// covers a whole chain, so the rows are taken in order and each fetch
+    /// is counted against the ones still missing; at most `max` are
+    /// fetched. A row with no chain gets an empty list, cached like any
+    /// other, so it is asked about once per patch set. A failed fetch is
+    /// logged and skipped. Returns how many were fetched.
+    pub async fn fetch_chain_related(&self, rows: &[ChangeSummary], max: usize) -> usize {
+        let mut lists = match self.cached_related_of(rows) {
+            Ok(lists) => lists,
+            Err(e) => {
+                log::warn!("reading cached related changes: {e}");
+                return 0;
+            }
+        };
+        let current: HashSet<&RevisionId> = rows
+            .iter()
+            .filter_map(|c| c.current_commit.as_ref().map(|k| &k.sha))
+            .collect();
+        let mut fetched = 0;
+        for row in rows {
+            if fetched == max {
+                break;
+            }
+            let Some(commit) = &row.current_commit else {
+                continue;
+            };
+            if commit.parents.first().is_none_or(|p| current.contains(p))
+                || list_with(&lists, row.number, &commit.sha).is_some()
+            {
+                continue;
+            }
+            fetched += 1;
+            match self.refresh_related(row.number, &commit.sha).await {
+                Ok(list) => {
+                    lists.insert(row.number, list);
+                }
+                Err(e) => log::warn!("related changes of {}: {e}", row.number),
+            }
+        }
+        fetched
+    }
+
+    /// The cached related changes of each row's current patch set, by
+    /// change.
+    fn cached_related_of(
+        &self,
+        rows: &[ChangeSummary],
+    ) -> Result<HashMap<ChangeNumber, Vec<RelatedChange>>, Error> {
+        let reader = self.reader();
+        let mut lists = HashMap::new();
+        for row in rows {
+            if let Some(commit) = &row.current_commit
+                && let Some(cached) = reader.load_related(self.server, row.number, &commit.sha)?
+            {
+                lists.insert(row.number, cached.changes);
+            }
+        }
+        Ok(lists)
     }
 
     /// Fetches the changes related to a revision and caches them.
@@ -546,6 +625,40 @@ impl RefreshSource for Syncer {
 
 /// True if `fresh` (the newly fetched first page) shows nothing the cache
 /// does not already show.
+/// Where a list row sits in its relation chain, when its parent is not
+/// another row: the nearest row below it, and how many changes of the
+/// chain between the two are not rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChainLink {
+    pub parent: ChangeNumber,
+    pub skipped: usize,
+}
+
+/// A cached related list that has the ancestors of `change` at `sha`:
+/// the change's own (`lists` has those at the current patch set), or one
+/// of another change of the chain that lists `change` at `sha`. Either
+/// way it lists every change between `change` and the bottom of the
+/// chain.
+fn list_with<'a>(
+    lists: &'a HashMap<ChangeNumber, Vec<RelatedChange>>,
+    change: ChangeNumber,
+    sha: &RevisionId,
+) -> Option<&'a [RelatedChange]> {
+    lists
+        .get(&change)
+        .or_else(|| {
+            lists.values().find(|l| {
+                l.iter()
+                    .any(|r| r.number == change && related_sha(r) == Some(sha))
+            })
+        })
+        .map(Vec::as_slice)
+}
+
+fn related_sha(r: &RelatedChange) -> Option<&RevisionId> {
+    r.commit.as_ref()?.sha.as_ref()
+}
+
 fn first_page_unchanged(cached: &CachedQuery, fresh: &[ChangeSummary], more: bool) -> bool {
     let Some(prefix) = cached.changes.get(..fresh.len()) else {
         return false;

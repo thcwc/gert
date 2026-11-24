@@ -24,7 +24,7 @@ pub use events::diff_change;
 pub use poll::{PollPolicy, PollState};
 pub use port::{HasCheckout, NotLocalPath, PathMap, PortCommit, PortError, PortMaps, PortSource};
 pub use syncer::{
-    CLAIM_STALE, ChainCommit, CommentsView, ConsolidateOptions, ConsolidateReport,
+    CLAIM_STALE, ChainCommit, ChainLink, CommentsView, ConsolidateOptions, ConsolidateReport,
     ConsolidationTiming, DraftCounts, DraftSave, FoundChange, HeldItem, HeldPublished, MarkLedgers,
     MarkSent, MarkSettled, NewChange, POST_DEADLINE, Ported, PostOutcome, PostReport,
     PublishOutcome, QueryUpdate, RefreshSource, RetryReport, ReviewerAdded, RowDetail,
