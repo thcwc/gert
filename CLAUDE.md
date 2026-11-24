@@ -393,7 +393,8 @@ sent there automatically once pushed, by the user or from the app.
 ## Status
 
 Built so far: login (anonymous, HTTP password, SSO via pasted token);
-dashboard of saved queries and free search, cached and polled; change page
+dashboard of saved queries (optionally grouped by relation chain) and free
+search, cached and polled; change page
 (header, submit requirements, votes, reviewers, commit message, relation chain
 with a side panel, file list, change log); diff page with side-by-side and
 unified diffs, context folding, syntax highlighting and inline comment

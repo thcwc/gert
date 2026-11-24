@@ -48,8 +48,8 @@ use crate::{
     login::LoginOutcome,
     servers::Connection,
     session::{
-        BackendError, Env, ProjectSettings, SavedQuery, ServerBackend, ServerConfig, ServerKey,
-        StartupPage,
+        BackendError, Env, ProjectSettings, QueryGroup, SavedQuery, ServerBackend, ServerConfig,
+        ServerKey, StartupPage,
     },
     settings::{FileFilters, PageLayout},
     theme::{self as app_theme, ColorMode, ColorModes, ThemeName},
@@ -781,7 +781,24 @@ impl SettingsPage {
             self.save_theme(app_theme::current(cx).next(), window, cx);
         } else if self.cursor == self.mode_row() || self.cursor == self.diff_mode_row() {
             self.cycle_mode(window, cx);
+        } else if let Some((Which::Queries, index)) = self.item_under_cursor() {
+            self.toggle_group(index, window, cx);
         }
+    }
+
+    /// Switches dashboard query `index` between grouping its rows by
+    /// relation chain and not.
+    fn toggle_group(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let mut list = self.queries.clone();
+        let Some(q) = list.get_mut(index) else {
+            return;
+        };
+        q.group = match q.group {
+            QueryGroup::Flat => QueryGroup::Chain,
+            QueryGroup::Chain => QueryGroup::Flat,
+        };
+        self.cursor = self.row_of(Which::Queries, index);
+        self.save(Which::Queries, list, index, window, cx);
     }
 
     fn start_startup_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -935,8 +952,11 @@ impl SettingsPage {
         let name = self.name.read(cx).value().to_string();
         let text = self.query.read(cx).value().to_string();
         match validate(&name, &text) {
-            Ok(q) => {
+            Ok(mut q) => {
                 self.invalid = None;
+                if let Some(old) = self.list(which).get(index) {
+                    q.group = old.group;
+                }
                 let list = with_query(self.list(which), index, q);
                 self.save(which, list, index, window, cx);
             }
@@ -1347,6 +1367,19 @@ impl SettingsPage {
                         .text_color(theme.muted_foreground)
                         .child(q.query.clone()),
                 )
+                .when(which == Which::Queries, |d| {
+                    d.child(
+                        Checkbox::new(("q-chains", i))
+                            .label("By chain")
+                            .checked(q.group == QueryGroup::Chain)
+                            .disabled(self.busy)
+                            .on_click(cx.listener(move |this, _: &bool, w, cx| {
+                                if this.mode == Mode::Browsing && this.can_change() {
+                                    this.toggle_group(i, w, cx);
+                                }
+                            })),
+                    )
+                })
                 .child(buttons)
                 .into_any_element(),
         }
@@ -1409,7 +1442,7 @@ impl SettingsPage {
         let (title, note, empty, add_label, add_id, new_id) = match which {
             Which::Queries => (
                 "Saved queries",
-                "Each one is a section of the dashboard, in this order.",
+                "Each one is a section of the dashboard, in this order. Space: show each relation chain as one block (By chain).",
                 "No saved queries. Press a to add one.",
                 "Add a query (a)",
                 "add-query",

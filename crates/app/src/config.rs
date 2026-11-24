@@ -14,6 +14,11 @@
 //! name = "Your turn"
 //! query = "attention:self"
 //!
+//! [[servers.queries]]
+//! name = "My chains"
+//! query = "is:open owner:self"
+//! group = "chain"            # optional: each relation chain as one block
+//!
 //! # Optional: bookmarks, buttons on the dashboard that open a search.
 //! [[servers.bookmarks]]
 //! name = "My open"
@@ -126,7 +131,7 @@ use serde::{Deserialize, Serialize};
 use sync::notify::{NotificationSettings, QuietHours, Rule, RuleEvent, Scope, default_rules};
 use toml_edit::{DocumentMut, Item};
 use ui::filters::{FileFilter, FilterAction, format_hex_color, parse_hex_color, validate_glob};
-use ui::{ColorMode, ColorModes, ServerKey, ThemeName, server_name_from_url};
+use ui::{ColorMode, ColorModes, QueryGroup, ServerKey, ThemeName, server_name_from_url};
 
 use crate::APP_NAME;
 
@@ -837,6 +842,41 @@ pub fn slugify(name: &str) -> String {
 pub struct QueryConfig {
     pub name: String,
     pub query: String,
+    /// How a dashboard section orders its rows: absent, or `"chain"`. A
+    /// plain string, so that a typo never fails the whole file;
+    /// [`QueryConfig::group`] reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+}
+
+impl QueryConfig {
+    /// The `group` value that groups rows by relation chain.
+    pub const CHAIN: &str = "chain";
+
+    /// How the section groups its rows. An unknown value groups nothing,
+    /// with a warning.
+    pub fn group(&self) -> QueryGroup {
+        match self.group.as_deref().map(str::trim) {
+            None => QueryGroup::Flat,
+            Some(g) if g.eq_ignore_ascii_case(Self::CHAIN) => QueryGroup::Chain,
+            Some(other) => {
+                log::warn!(
+                    "config: query {:?}: group {other:?} is not \"{}\"; not grouping",
+                    self.name,
+                    Self::CHAIN
+                );
+                QueryGroup::Flat
+            }
+        }
+    }
+
+    /// The `group` value that says `g`.
+    pub fn group_value(g: QueryGroup) -> Option<String> {
+        match g {
+            QueryGroup::Flat => None,
+            QueryGroup::Chain => Some(Self::CHAIN.to_owned()),
+        }
+    }
 }
 
 /// A `[[filters]]` table. The fields are plain strings and options, so a
@@ -1009,6 +1049,7 @@ fn q(name: &str, query: &str) -> QueryConfig {
     QueryConfig {
         name: name.to_owned(),
         query: query.to_owned(),
+        group: None,
     }
 }
 
@@ -1413,11 +1454,12 @@ fn to_edit_value(v: &toml::Value) -> toml_edit::Value {
     }
 }
 
-fn query_of(t: &toml_edit::Table) -> Option<(String, String)> {
-    Some((
-        t.get("name")?.as_str()?.to_owned(),
-        t.get("query")?.as_str()?.to_owned(),
-    ))
+fn query_of(t: &toml_edit::Table) -> Option<QueryConfig> {
+    Some(QueryConfig {
+        name: t.get("name")?.as_str()?.to_owned(),
+        query: t.get("query")?.as_str()?.to_owned(),
+        group: t.get("group").and_then(Item::as_str).map(str::to_owned),
+    })
 }
 
 fn set_value(t: &mut toml_edit::Table, key: &str, mut v: toml_edit::Value) {
@@ -1450,11 +1492,7 @@ fn set_str(t: &mut toml_edit::Table, key: &str, v: &str) {
 /// The queries of the array of tables `key` in `t`.
 fn table_queries(t: &toml_edit::Table, key: &str) -> Vec<QueryConfig> {
     match t.get(key) {
-        Some(Item::ArrayOfTables(a)) => a
-            .iter()
-            .filter_map(query_of)
-            .map(|(name, query)| QueryConfig { name, query })
-            .collect(),
+        Some(Item::ArrayOfTables(a)) => a.iter().filter_map(query_of).collect(),
         _ => Vec::new(),
     }
 }
@@ -1504,11 +1542,12 @@ fn apply_queries(key: &str, new: &[QueryConfig], root: &mut toml_edit::Table) {
         root,
         key,
         new,
-        |q| Some((q.name.clone(), q.query.clone())),
+        |q| Some(q.clone()),
         query_of,
         |q, t| {
             set_value(t, "name", q.name.as_str().into());
             set_value(t, "query", q.query.as_str().into());
+            set_or_remove(t, "group", q.group.as_deref().map(Into::into));
         },
     );
 }

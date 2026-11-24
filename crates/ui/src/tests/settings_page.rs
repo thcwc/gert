@@ -689,6 +689,35 @@ fn moving_a_query_saves_it_and_the_dashboard_follows(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn space_groups_a_query_by_chain_and_an_edit_keeps_it(cx: &mut TestAppContext) {
+    use crate::session::QueryGroup;
+    let f = fixture(cx, false);
+    open_settings(cx, &f);
+    let groups = |f: &Fixture| -> Vec<Vec<QueryGroup>> {
+        f.backend
+            .saved_queries
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|l| l.iter().map(|q| q.group).collect())
+            .collect()
+    };
+    press(cx, &f, "space");
+    assert_eq!(groups(&f), [[QueryGroup::Chain, QueryGroup::Flat]]);
+    // Editing the name or text leaves the grouping alone.
+    press(cx, &f, "e");
+    press(cx, &f, "enter");
+    assert_eq!(groups(&f)[1], [QueryGroup::Chain, QueryGroup::Flat]);
+    press(cx, &f, "space");
+    assert_eq!(groups(&f)[2], [QueryGroup::Flat, QueryGroup::Flat]);
+    // The bookmark rows (here the empty one) have no grouping.
+    press(cx, &f, "j");
+    press(cx, &f, "j");
+    press(cx, &f, "space");
+    assert_eq!(groups(&f).len(), 3);
+}
+
+#[gpui_kit::test]
 #[cfg_attr(not(feature = "slow-tests"), ignore = "slow: --features slow-tests")]
 fn editing_adding_and_deleting(cx: &mut TestAppContext) {
     let f = fixture(cx, false);

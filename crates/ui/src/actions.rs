@@ -46,7 +46,8 @@ actions!(
         DeleteQuery,
         MoveQueryDown,
         MoveQueryUp,
-        /// `space`: switch the startup page, or toggle advance-after-vote.
+        /// `space`: group a dashboard query by chain or not, switch the
+        /// startup page, or toggle advance-after-vote.
         ToggleSetting,
         /// `y` / `Enter` while asked to delete.
         ConfirmDelete,
@@ -798,7 +799,7 @@ pub fn settings_entries() -> Vec<Entry> {
         e(
             "Space",
             KeyBinding::new("space", ToggleSetting, Some(b)),
-            "Startup page: dashboard or search; advance after a vote: on or off; Notifications: switch the option, or edit the number or hours",
+            "Dashboard query: group its rows by relation chain or not; startup page: dashboard or search; advance after a vote: on or off; Notifications: switch the option, or edit the number or hours",
         ),
         e(
             "a",

@@ -30,7 +30,10 @@ pub struct AppBackend {
 pub fn queries_to_ui(queries: &[QueryConfig]) -> Vec<SavedQuery> {
     queries
         .iter()
-        .map(|q| SavedQuery::new(q.name.clone(), q.query.clone()))
+        .map(|q| SavedQuery {
+            group: q.group(),
+            ..SavedQuery::new(q.name.clone(), q.query.clone())
+        })
         .collect()
 }
 
@@ -120,6 +123,7 @@ fn queries_from_ui(queries: &[SavedQuery]) -> Vec<QueryConfig> {
         .map(|q| QueryConfig {
             name: q.name.clone(),
             query: q.query.clone(),
+            group: QueryConfig::group_value(q.group),
         })
         .collect()
 }
@@ -372,6 +376,7 @@ pub fn startup_to_ui(page: &StartupPage) -> UiStartupPage {
 mod tests {
     use super::*;
     use crate::secrets::MemorySecrets;
+    use ui::QueryGroup;
 
     fn mem_store() -> Arc<Mutex<Store>> {
         Arc::new(Mutex::new(Store::open_in_memory().unwrap()))
@@ -494,6 +499,45 @@ mod tests {
         let text = std::fs::read_to_string(&b.config_file).unwrap();
         assert!(text.contains("# mine") && text.contains("# prod"), "{text}");
         assert!(text.contains("name = \"B\""), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_query_groups_by_chain_and_switching_keeps_its_comments() {
+        let dir = std::env::temp_dir().join(format!("backend-group-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let b = AppBackend {
+            config_file: dir.join("config.toml"),
+            keyring: Arc::new(MemorySecrets::default()),
+            store: mem_store(),
+        };
+        std::fs::write(
+            &b.config_file,
+            "[[servers]]\nid = \"g\"\nname = \"g\"\nurl = \"https://g\"\n\n\
+             # chains\n[[servers.queries]]\nname = \"A\"\nquery = \"x\"\ngroup = \"Chain\"\n\n\
+             [[servers.queries]]\nname = \"B\"\nquery = \"y\"\ngroup = \"typo\"\n",
+        )
+        .unwrap();
+        let cfg = Config::load(&b.config_file).unwrap().unwrap();
+        let loaded = queries_to_ui(&cfg.server("g").unwrap().queries);
+        let groups: Vec<_> = loaded.iter().map(|q| q.group).collect();
+        // An unknown value groups nothing.
+        assert_eq!(groups, [QueryGroup::Chain, QueryGroup::Flat]);
+
+        let mut flat = loaded[0].clone();
+        flat.group = QueryGroup::Flat;
+        let mut chain = loaded[1].clone();
+        chain.group = QueryGroup::Chain;
+        let new = [flat, chain];
+        assert_eq!(b.server("g").save_queries(&new).unwrap(), new);
+        let text = std::fs::read_to_string(&b.config_file).unwrap();
+        assert!(text.contains("# chains"), "{text}");
+        assert_eq!(text.matches("group = \"chain\"").count(), 1, "{text}");
+        assert!(
+            text.ends_with("name = \"B\"\nquery = \"y\"\ngroup = \"chain\"\n"),
+            "{text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
