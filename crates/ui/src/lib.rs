@@ -5,6 +5,7 @@ mod action_menu;
 mod actions;
 mod attention;
 mod card;
+mod chain_groups;
 mod change_detail;
 mod checkouts;
 mod comments;
@@ -60,7 +61,7 @@ pub use login::{LoginError, LoginOutcome, LoginRequest};
 pub use notifier::{Clicked, Notifier};
 pub use servers::{ACTIVE_SERVER_STATE, Connection};
 pub use session::{
-    Backend, BackendError, Env, LocalDiff, ProjectSettings, SavedQuery, ServerBackend,
+    Backend, BackendError, Env, LocalDiff, ProjectSettings, QueryGroup, SavedQuery, ServerBackend,
     ServerConfig, ServerKey, ServerSetup, Startup, StartupPage, server_name_from_url,
 };
 pub use shell::{Shell, init};

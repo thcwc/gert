@@ -130,6 +130,105 @@ fn dashboard_shows_cached_rows_and_j_k_cross_sections(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_dashboard_section_groups_its_rows_by_relation_chain(cx: &mut TestAppContext) {
+    use crate::session::QueryGroup;
+    // Server order: 9 alone, 1 the base of 1 <- 2 <- 3, where 3 is still
+    // on patch set 1 of 2 ("b-old"). Cached without commits, as a plain
+    // query would leave them.
+    let mut store = seeded(&[("mine", &[9, 1, 3, 2])]);
+    let related = model::RelatedChange {
+        project: "platform/foo".into(),
+        change_id: None,
+        number: ChangeNumber(2),
+        patch_set: model::PatchSetNumber(1),
+        current_patch_set: Some(model::PatchSetNumber(2)),
+        status: None,
+        submittable: None,
+        work_in_progress: false,
+        commit: Some(model::Commit {
+            sha: Some("b-old".into()),
+            parents: Vec::new(),
+            author: None,
+            committer: None,
+            subject: String::new(),
+            message: None,
+        }),
+    };
+    store
+        .save_related(
+            ServerId(1),
+            ChangeNumber(3),
+            &"c".into(),
+            &[related],
+            "2024-06-15T10:05:00Z".parse().expect("ts"),
+        )
+        .expect("save related");
+    let row = |n: u64, sha: &str, parent: &str| {
+        serde_json::json!({
+            "_number": n, "project": "platform/foo", "branch": "main",
+            "change_id": format!("I{n}"), "subject": format!("Change number {n}"),
+            "status": "NEW", "owner": {"_account_id": 1},
+            "created": "2024-06-15 10:00:00.000000000",
+            "updated": "2024-06-15 10:00:00.000000000",
+            "current_revision": sha,
+            "revisions": {sha: {"_number": 1, "commit": {
+                "parents": [{"commit": parent}], "subject": "s"}}}
+        })
+    };
+    let http = FakeHttpClient::new();
+    http.push_response(
+        200,
+        format!(
+            ")]}}'\n{}",
+            serde_json::json!([
+                row(9, "i", "main"),
+                row(1, "a", "main"),
+                row(3, "c", "b-old"),
+                row(2, "b", "a")
+            ])
+        ),
+    );
+    let env = env_with(store, &http);
+    let session = Session::new(&env, &setup(), Some(gerrit_api::Auth::Anonymous)).expect("session");
+    let specs = vec![SavedQuery {
+        group: QueryGroup::Chain,
+        ..spec("Mine", "mine")
+    }];
+    let (window, page) = open(cx, |window, cx| {
+        let page =
+            cx.new(|cx| ChangeListPage::new(session, ListKind::Dashboard, specs, None, true, cx));
+        let focus = page.read(cx).focus_handle_for_test();
+        window.focus(&focus, cx);
+        page
+    });
+    cx.run_until_parked();
+
+    let url = http.requests()[0].uri().to_string();
+    assert!(url.contains("o=CURRENT_COMMIT"), "{url}");
+    let shown = |cx: &mut TestAppContext| -> Vec<u64> {
+        cx.update(|cx| {
+            page.read(cx)
+                .visible_rows(0)
+                .iter()
+                .map(|c| c.number.0)
+                .collect()
+        })
+    };
+    assert_eq!(shown(cx), [9, 3, 2, 1]);
+    let mut visual = gpui_kit::VisualTestContext::from_window(window, cx);
+    for place in ["chain-Tip", "chain-Middle", "chain-Base"] {
+        assert!(visual.debug_bounds(place).is_some(), "{place}");
+    }
+    // j / k follow the rows as shown.
+    let press = |cx: &mut TestAppContext, key: &'static str| {
+        cx.update_window(window, |_, window, cx| window.press(key, cx))
+            .expect("press");
+    };
+    press(cx, "j");
+    cx.update(|cx| assert_eq!(page.read(cx).selected_number(), Some(ChangeNumber(3))));
+}
+
+#[gpui_kit::test]
 fn bookmark_keys_open_the_bookmark_and_b_b_bookmarks_a_search(cx: &mut TestAppContext) {
     use crate::pages::list::ListEvent;
     let env = env_with(seeded(&[("a", &[1])]), &FakeHttpClient::new());

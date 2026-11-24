@@ -22,6 +22,9 @@ use crate::{
 pub struct SavedQuery {
     pub name: String,
     pub query: String,
+    /// How a dashboard section orders its rows. Bookmarks open a search,
+    /// which ignores it.
+    pub group: QueryGroup,
 }
 
 impl SavedQuery {
@@ -29,8 +32,21 @@ impl SavedQuery {
         Self {
             name: name.into(),
             query: query.into(),
+            group: QueryGroup::default(),
         }
     }
+}
+
+/// How a dashboard section orders its rows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QueryGroup {
+    /// As the server sends them.
+    #[default]
+    Flat,
+    /// The changes of a relation chain together, newest descendant first.
+    /// The rows are fetched with their commits, which costs the server a
+    /// little more per poll.
+    Chain,
 }
 
 /// The local checkout of one Gerrit project (`[[servers.projects]]`).
